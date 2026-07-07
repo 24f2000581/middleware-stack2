@@ -32,6 +32,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # CRITICAL FIX: Expose the custom header so the frontend fetch can read it
+    expose_headers=["X-Request-ID"], 
 )
 
 # ==========================
@@ -68,16 +70,14 @@ async def middleware(request: Request, call_next):
     timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
 
     if len(timestamps) >= RATE_LIMIT:
-        response = JSONResponse(
+        return JSONResponse(
             status_code=429,
             content={
                 "detail": "Rate limit exceeded"
-            }
+            },
+            # It's slightly safer to pass headers directly into the JSONResponse
+            headers={"X-Request-ID": request_id}
         )
-
-        # Echo request ID even for errors
-        response.headers["X-Request-ID"] = request_id
-        return response
 
     timestamps.append(now)
     client_requests[client_id] = timestamps
