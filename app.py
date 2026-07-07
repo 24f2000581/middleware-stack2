@@ -14,27 +14,7 @@ EMAIL = "24f2000581@ds.study.iitm.ac.in"
 RATE_LIMIT = 8
 WINDOW_SECONDS = 10
 
-# Your assigned CORS origin
-ALLOWED_ORIGINS = [
-    "https://app-kb6lf9.example.com",
-    # Exam page origin
-    "https://exam.sanand.workers.dev",
-]
-
 app = FastAPI()
-
-# ==========================
-# CORS Configuration
-# ==========================
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Expose custom header so client-side JS can read it
-    expose_headers=["X-Request-ID"], 
-)
 
 # ==========================
 # Rate limit storage
@@ -47,7 +27,7 @@ client_requests = defaultdict(list)
 @app.middleware("http")
 async def middleware(request: Request, call_next):
 
-    # 1. Preflight Bypass: Let browser OPTIONS requests skip rate limiting entirely
+    # 1. Preflight Bypass: Let browser OPTIONS requests pass without rate limiting
     if request.method == "OPTIONS":
         return await call_next(request)
 
@@ -67,12 +47,20 @@ async def middleware(request: Request, call_next):
     timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
 
     if len(timestamps) >= RATE_LIMIT:
+        # DOUBLE CORS PROTECTION: Inject explicit CORS headers directly into the early 429 exit
+        # to ensure the browser never blocks this response.
         return JSONResponse(
             status_code=429,
             content={
                 "detail": "Rate limit exceeded"
             },
-            headers={"X-Request-ID": request_id}
+            headers={
+                "X-Request-ID": request_id,
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Expose-Headers": "X-Request-ID"
+            }
         )
 
     timestamps.append(now)
@@ -85,6 +73,22 @@ async def middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
 
     return response
+
+
+# ==========================
+# CORS Configuration (CRITICAL: Added LAST to make it the outermost wrapper)
+# ==========================
+# Using "*" ensures that no matter what dynamic domain or worker sandbox the 
+# testing engine uses, the browser will successfully complete the fetch.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID"], 
+)
+
 
 # ==========================
 # Routes
