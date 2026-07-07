@@ -24,7 +24,7 @@ ALLOWED_ORIGINS = [
 app = FastAPI()
 
 # ==========================
-# CORS
+# CORS Configuration
 # ==========================
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    # CRITICAL FIX: Expose the custom header so the frontend fetch can read it
+    # Expose custom header so client-side JS can read it
     expose_headers=["X-Request-ID"], 
 )
 
@@ -47,23 +47,20 @@ client_requests = defaultdict(list)
 @app.middleware("http")
 async def middleware(request: Request, call_next):
 
-    # ----------------------
-    # Request Context
-    # ----------------------
-    request_id = request.headers.get("X-Request-ID")
+    # 1. Preflight Bypass: Let browser OPTIONS requests skip rate limiting entirely
+    if request.method == "OPTIONS":
+        return await call_next(request)
 
+    # 2. Request Context Setup
+    request_id = request.headers.get("X-Request-ID")
     if not request_id:
         request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id
 
-    # ----------------------
-    # Rate Limiter
-    # ----------------------
+    # 3. Rate Limiter Logic
     client_id = request.headers.get("X-Client-Id", "anonymous")
-
     now = time.time()
-
     timestamps = client_requests[client_id]
 
     # Remove timestamps older than 10 seconds
@@ -75,19 +72,16 @@ async def middleware(request: Request, call_next):
             content={
                 "detail": "Rate limit exceeded"
             },
-            # It's slightly safer to pass headers directly into the JSONResponse
             headers={"X-Request-ID": request_id}
         )
 
     timestamps.append(now)
     client_requests[client_id] = timestamps
 
-    # ----------------------
-    # Continue request
-    # ----------------------
+    # 4. Process Request
     response = await call_next(request)
 
-    # Echo request ID in response header
+    # 5. Inject Echo Header into Success Paths
     response.headers["X-Request-ID"] = request_id
 
     return response
